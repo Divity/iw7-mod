@@ -70,6 +70,8 @@ namespace ui_scripting
 
 		globals_t globals{};
 
+		std::atomic_uint64_t lua_generation_count{};
+
 		bool is_loaded_script(const std::string& name)
 		{
 			return globals.loaded_scripts.contains(name);
@@ -217,9 +219,15 @@ namespace ui_scripting
 			scheduler["once"] = [](const function_argument& arg0, const variadic_args& va)
 			{
 				int delay = va.size() >= 1 ? va[0].as<int>() : 0;
+				const auto generation = lua_generation();
 
-				scheduler::once([arg0, delay]()
+				scheduler::once([arg0, generation]()
 				{
+					if (generation != lua_generation())
+					{
+						return;
+					}
+
 					auto func = arg0.as<function>();
 					func();
 				}, scheduler::lui, std::chrono::milliseconds(delay));
@@ -296,6 +304,30 @@ namespace ui_scripting
 			*/
 
 			load_scripts();
+
+			std::vector<std::pair<std::string, std::string>> mod_scripts;
+			game::DB_EnumXAssets(game::XAssetType::ASSET_TYPE_LUA_FILE, [&](const game::XAssetHeader header)
+			{
+				const auto asset = header.luaFile;
+				if (asset == nullptr || asset->name == nullptr || asset->buffer == nullptr || asset->len <= 0)
+				{
+					return;
+				}
+
+				const std::string name = asset->name;
+				if (name.starts_with("ui/mods/"))
+				{
+					mod_scripts.emplace_back(name, std::string(asset->buffer, static_cast<std::size_t>(asset->len)));
+				}
+			});
+
+			std::sort(mod_scripts.begin(), mod_scripts.end());
+
+			for (const auto& [name, data] : mod_scripts)
+			{
+				print_loading_script(name);
+				load_script(name, data);
+			}
 		}
 
 		void try_start()
@@ -324,6 +356,7 @@ namespace ui_scripting
 		{
 			converted_functions.clear();
 			globals = {};
+			lua_generation_count++;
 			return hks_shutdown_hook.invoke<void>();
 		}
 
@@ -457,6 +490,11 @@ namespace ui_scripting
 	bool lui_running()
 	{
 		return *game::hks::lua_state != nullptr;
+	}
+
+	std::uint64_t lua_generation()
+	{
+		return lua_generation_count;
 	}
 
 	class component final : public component_interface
