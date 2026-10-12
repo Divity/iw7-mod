@@ -355,7 +355,17 @@ namespace party
 					}
 
 					download::stop_download();
-					download::start_download(target, info, files);
+
+					const auto base = info.get("sv_wwwBaseUrl");
+					if (base.empty())
+					{
+						throw std::runtime_error("Download failed: Server doesn't have 'sv_wwwBaseUrl' dvar set.");
+					}
+
+					download::start_download(base, files, [target]
+					{
+						connect(target);
+					});
 					return true;
 				}
 				else if (needs_restart || needs_vid_restart)

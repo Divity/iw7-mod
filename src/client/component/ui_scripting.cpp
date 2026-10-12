@@ -15,6 +15,7 @@
 #include "scripting.hpp"
 #include "server_list.hpp"
 #include "download.hpp"
+#include "workshop.hpp"
 
 #include "game/ui_scripting/execution.hpp"
 //#include "game/scripting/execution.hpp"
@@ -290,6 +291,33 @@ namespace ui_scripting
 			lua["download"] = download_table;
 
 			download_table["abort"] = download::stop_download;
+
+			auto workshop_table = table();
+			lua["workshop"] = workshop_table;
+
+			workshop_table["refresh"] = workshop::refresh;
+			workshop_table["install"] = workshop::install;
+			workshop_table["uninstall"] = workshop::uninstall;
+			workshop_table["getitems"] = []
+			{
+				std::vector<table> items{};
+				for (const auto& item : workshop::get_items())
+				{
+					table value{};
+					value.set("id", item.id);
+					value.set("type", item.type);
+					value.set("name", item.name);
+					value.set("author", item.author);
+					value.set("description", item.description);
+					value.set("version", item.version);
+					value.set("size", static_cast<double>(item.size));
+					value.set("state", item.state);
+					value.set("preview", item.preview);
+					items.emplace_back(value);
+				}
+
+				return items;
+			};
 
 			//download_table["userdownloadresponse"] = party::user_download_response;
 			//download_table["getwwwurl"] = []

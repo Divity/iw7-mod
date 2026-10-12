@@ -4,7 +4,6 @@
 #include "download.hpp"
 #include "console/console.hpp"
 #include "scheduler.hpp"
-#include "party.hpp"
 
 #include "game/ui_scripting/execution.hpp"
 
@@ -101,9 +100,76 @@ namespace download
 		{
 			throw std::runtime_error(error);
 		}
+
+		bool download_url(const std::string& url, const std::string& path)
+		{
+			const auto offset = utils::io::file_size(path);
+			console::debug("Downloading %s: %s\n", path.data(), url.data());
+			auto data = utils::http::download_to_file(url, path, offset, &progress_callback);
+			if (!data.has_value())
+			{
+				menu_error(utils::string::va("Download failed: An unknown error occurred when getting data from '%s', please try again.", url.data()));
+			}
+
+			if (download_aborted())
+			{
+				return false;
+			}
+
+			auto& result = data.value();
+			if (result.code != CURLE_OK)
+			{
+				if (result.code == CURLE_COULDNT_CONNECT)
+				{
+					menu_error(utils::string::va("Download failed: Couldn't connect to server '%s' (%i)\n",
+						url.data(), result.code));
+				}
+
+				menu_error(utils::string::va("Download failed: %s (%i)\n",
+					curl_easy_strerror(result.code), result.code));
+			}
+
+			if (result.response_code >= 400 && !(result.response_code == 416 && offset > 0))
+			{
+				menu_error(utils::string::va("Download failed: Server returned bad response code (%i)\n",
+					result.response_code));
+			}
+
+			return true;
+		}
+
+		void merge_parts(const std::string& path, const std::vector<std::string>& parts)
+		{
+			std::ofstream stream(path, std::ios::binary | std::ofstream::out);
+			if (!stream.is_open())
+			{
+				menu_error(utils::string::va("Download failed: Couldn't write file '%s'\n", path.data()));
+			}
+
+			std::string buffer;
+			buffer.resize(1024 * 1024);
+
+			for (const auto& part : parts)
+			{
+				std::ifstream part_stream(part, std::ios::binary);
+				while (part_stream.read(buffer.data(), buffer.size()) || part_stream.gcount() > 0)
+				{
+					stream.write(buffer.data(), part_stream.gcount());
+				}
+
+				part_stream.close();
+
+				if (!stream.good())
+				{
+					menu_error(utils::string::va("Download failed: Couldn't write file '%s'\n", path.data()));
+				}
+
+				utils::io::remove_file(part);
+			}
+		}
 	}
 
-	void start_download(const game::netadr_s& target, const utils::info_string& info, const std::vector<file_t>& files)
+	void start_download(const std::string& base, const std::vector<file_t>& files, const std::function<void()>& callback)
 	{
 		if (download_active())
 		{
@@ -111,7 +177,7 @@ namespace download
 			{
 				if (!download_active())
 				{
-					start_download(target, info, files);
+					start_download(base, files, callback);
 					return scheduler::cond_end;
 				}
 
@@ -126,13 +192,6 @@ namespace download
 			globals_ = {};
 		});
 
-		const auto base = info.get("sv_wwwBaseUrl");
-		if (base.empty())
-		{
-			menu_error("Download failed: Server doesn't have 'sv_wwwBaseUrl' dvar set.");
-			return;
-		}
-
 		scheduler::once([]
 		{
 			ui_scripting::notify("mod_download_start", {});
@@ -140,6 +199,7 @@ namespace download
 
 		scheduler::once([=]
 		{
+			try
 			{
 				const auto _0 = gsl::finally(&mark_unactive);
 				mark_active();
@@ -151,63 +211,67 @@ namespace download
 
 				for (const auto& file : files)
 				{
-					scheduler::once([=]
-					{
-						const ui_scripting::table data_table{};
-						data_table.set("name", file.name.data());
+					const auto tmp_name = file.name + ".tmp";
+					const auto urls = file.urls.empty()
+						? std::vector<std::string>{std::format("{}/{}", base, file.name)}
+						: file.urls;
 
-						ui_scripting::notify("mod_download_set_file",
+					std::vector<std::string> parts{};
+					for (auto i = 0u; i < urls.size(); i++)
+					{
+						const auto label = urls.size() > 1
+							? std::format("{} ({}/{})", file.name, i + 1, urls.size())
+							: file.name;
+
+						scheduler::once([=]
 						{
-							{"request", data_table}
-						});
-					}, scheduler::pipeline::lui);
+							const ui_scripting::table data_table{};
+							data_table.set("name", label.data());
 
-					const auto url = utils::string::va("%s/%s", base.data(), file.name.data());
-					console::debug("Downloading %s from %s: %s\n", file.name.data(), base.data(), url);
-					auto data = utils::http::get_data(url, {}, {}, &progress_callback);
-					if (!data.has_value())
-					{
-						menu_error(utils::string::va("Download failed: An unknown error occurred when getting data from '%s', please try again.", url));
-						return;
-					}
+							ui_scripting::notify("mod_download_set_file",
+							{
+								{"request", data_table}
+							});
+						}, scheduler::pipeline::lui);
 
-					if (download_aborted())
-					{
-						return;
-					}
-
-					auto& result = data.value();
-					if (result.code != CURLE_OK)
-					{
-						if (result.code == CURLE_COULDNT_CONNECT)
+						const auto part_name = urls.size() > 1 ? std::format("{}{}", tmp_name, i) : tmp_name;
+						if (!download_url(urls[i], part_name))
 						{
-							menu_error(utils::string::va("Download failed: Couldn't connect to server '%s' (%i)\n", 
-								url, result.code));
 							return;
 						}
 
-						menu_error(utils::string::va("Download failed: %s (%i)\n", 
-							curl_easy_strerror(result.code), result.code));
-						return;
+						parts.emplace_back(part_name);
 					}
 
-					if (result.response_code >= 400)
+					if (parts.size() > 1)
 					{
-						menu_error(utils::string::va("Download failed: Server returned bad response code (%i)\n", 
-							result.response_code));
-						return;
+						merge_parts(tmp_name, parts);
 					}
 
-					const auto hash = utils::hash::get_buffer_hash(result.buffer, file.name);
+					const auto hash = utils::hash::get_file_hash(tmp_name, file.name);
 					if (hash != file.hash)
 					{
-						menu_error(utils::string::va("Download failed: File hash doesn't match the server's (%s: %s != %s)\n", 
+						utils::io::remove_file(tmp_name);
+						menu_error(utils::string::va("Download failed: File hash doesn't match the server's (%s: %s != %s)\n",
 							file.name.data(), hash.data(), file.hash.data()));
-						return;
 					}
 
-					utils::io::write_file(file.name, result.buffer, false);
+					utils::io::remove_file(file.name);
+					if (!utils::io::move_file(tmp_name, file.name))
+					{
+						menu_error(utils::string::va("Download failed: Couldn't write file '%s'\n", file.name.data()));
+					}
 				}
+			}
+			catch (const std::exception& e)
+			{
+				const std::string error = e.what();
+				scheduler::once([error]
+				{
+					ui_scripting::notify("mod_download_done", {});
+					game::shared::menu_error(error);
+				}, scheduler::pipeline::lui);
+				return;
 			}
 
 			scheduler::once([]
@@ -215,10 +279,7 @@ namespace download
 				ui_scripting::notify("mod_download_done", {});
 			}, scheduler::pipeline::lui);
 
-			scheduler::once([target]
-			{
-				party::connect(target);
-			}, scheduler::pipeline::main);
+			scheduler::once(callback, scheduler::pipeline::main);
 		}, scheduler::pipeline::async);
 	}
 

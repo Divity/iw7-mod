@@ -10,8 +10,9 @@ namespace download
 	{
 		std::string name;
 		std::string hash;
+		std::vector<std::string> urls{};
 	};
 
-	void start_download(const game::netadr_s& target, const utils::info_string& info, const std::vector<file_t>& files);
+	void start_download(const std::string& base, const std::vector<file_t>& files, const std::function<void()>& callback);
 	void stop_download();
 }
