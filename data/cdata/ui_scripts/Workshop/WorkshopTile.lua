@@ -5,9 +5,11 @@ local imageHeight = 169
 local accentColor = 14032924
 
 local typeBadges = {
-    map = {text = "MAP", color = 3112920},
-    mod = {text = "MOD", color = 9323693}
+    map = {text = "MAP", color = 3112920, width = 50},
+    mod = {text = "MOD", color = 9323693, width = 50}
 }
+
+local soonBadge = {text = "COMING SOON", color = 14715422, width = 110}
 local mutedColor = 10132122
 
 local stateBadges = {
@@ -26,9 +28,12 @@ local function updateTile(tile)
     local item = dataSource.item
     tile.Title:setText(ToUpperCase(item.name), 0)
 
-    local typeBadge = typeBadges[item.type] or typeBadges.map
+    local typeBadge = item.state == "soon" and soonBadge or typeBadges[item.type] or typeBadges.map
     tile.Type:setText(typeBadge.text, 0)
     tile.TypeBackground:SetRGBFromInt(typeBadge.color, 0)
+    tile.TypeBackground:SetLeft(_1080p * -(typeBadge.width + 12), 0)
+    tile.Type:SetLeft(_1080p * -(typeBadge.width + 12), 0)
+    tile.Title:SetRight(_1080p * -(typeBadge.width + 22), 0)
 
     tile.Author:setText(item.author ~= "" and ToUpperCase("by " .. item.author) or "", 0)
     tile.Summary:setText(item.description, 0)

@@ -164,7 +164,17 @@ namespace workshop
 				return {};
 			}
 
-			if (!value.contains("files") || !value["files"].is_array())
+			if (!value.contains("files") || (value["files"].is_array() && value["files"].empty()))
+			{
+				if (entry.image.empty())
+				{
+					return {};
+				}
+
+				return {entry};
+			}
+
+			if (!value["files"].is_array())
 			{
 				return {};
 			}
@@ -275,6 +285,12 @@ namespace workshop
 
 		void update_state(entry_t& entry)
 		{
+			if (entry.files.empty())
+			{
+				entry.item.state = "soon";
+				return;
+			}
+
 			if (!utils::io::file_exists(std::format("{}/{}", get_folder(entry.item), get_main_file(entry.item))))
 			{
 				entry.item.state = "none";
@@ -573,7 +589,7 @@ namespace workshop
 	void install(const std::string& id)
 	{
 		const auto entry = find_entry(id);
-		if (!entry.has_value())
+		if (!entry.has_value() || entry->files.empty())
 		{
 			return;
 		}
@@ -597,7 +613,7 @@ namespace workshop
 	void uninstall(const std::string& id)
 	{
 		const auto entry = find_entry(id);
-		if (!entry.has_value())
+		if (!entry.has_value() || entry->files.empty())
 		{
 			return;
 		}

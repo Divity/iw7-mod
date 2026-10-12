@@ -6,13 +6,15 @@ local mutedColor = 10132122
 local stateTexts = {
     none = "NOT INSTALLED",
     installed = "^2INSTALLED",
-    update = "^3UPDATE AVAILABLE"
+    update = "^3UPDATE AVAILABLE",
+    soon = "^3COMING SOON"
 }
 
 local actionTexts = {
     none = "SELECT TO INSTALL",
     installed = "",
-    update = "SELECT TO UPDATE"
+    update = "SELECT TO UPDATE",
+    soon = ""
 }
 
 workshopPathCleanup = function()
@@ -29,6 +31,10 @@ local function formatSize(size)
 end
 
 local function getItemMeta(item)
+    if item.state == "soon" then
+        return ToUpperCase(item.type)
+    end
+
     local meta = ToUpperCase(item.type) .. "  /  " .. formatSize(item.size)
     if item.version ~= "" then
         meta = meta .. "  /  V" .. item.version
