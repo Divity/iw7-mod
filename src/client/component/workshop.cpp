@@ -650,7 +650,7 @@ namespace workshop
 
 			scheduler::once([]()
 			{
-				workshop_url = game::Dvar_RegisterString("workshop_url", "", game::DVAR_FLAG_SAVED, "Workshop catalog url");
+				workshop_url = game::Dvar_RegisterString("workshop_url", "https://raw.githubusercontent.com/Divity/ix-data/main/index.json", game::DVAR_FLAG_SAVED, "Workshop catalog url");
 			}, scheduler::pipeline::main);
 		}
 	};
