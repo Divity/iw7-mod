@@ -27,17 +27,14 @@ namespace renderer
 		constexpr std::size_t smodel_regions = 11;
 		constexpr std::size_t smodel_lists = 4;
 		constexpr std::size_t smodel_pool_size = 64ull * 1024ull * 1024ull;
-		constexpr std::size_t smodel_record_bytes = 0x40000;
-		static_assert((smodel_record_bytes - 64) / 64 * 4 * 4 + 15 <= 0xFFFF, "a record entry past 16 bits");
+		constexpr std::size_t smodel_delayed_slot_size = 16;
+		constexpr std::size_t smodel_list_stride = 0x48;
+		constexpr std::uint32_t smodel_view_record_bytes = 0x40000;
+		static_assert((smodel_view_record_bytes - 64) / 64 * 4 * 4 + 15 <= 0xFFFF, "a record entry past 16 bits");
 
 		const auto* smodel_list_sizes = reinterpret_cast<const std::uint16_t*>(0x14153C768);
 		std::uint8_t* smodel_pool[2]{};
 		std::atomic<std::size_t> smodel_pool_used[2]{};
-
-		std::uint8_t* frame_data()
-		{
-			return *reinterpret_cast<std::uint8_t**>(0x148F73088);
-		}
 
 		std::size_t frame_data_index()
 		{
@@ -46,7 +43,7 @@ namespace renderer
 
 		void r_init_smodel_lists_stub(std::uint8_t* lists, std::uint8_t* delayed_stack)
 		{
-			std::size_t list_bytes = smodel_record_bytes, delayed_slots = 0;
+			std::size_t list_bytes = smodel_view_record_bytes, delayed_slots = 0;
 			for (auto region = 0u; region < smodel_regions; region++)
 			{
 				list_bytes += smodel_lists * smodel_list_sizes[region * 2] * smodel_list_scale;
@@ -60,21 +57,22 @@ namespace renderer
 				static std::atomic_bool warned = false;
 				if (!warned.exchange(true))
 				{
-					console::warn("[renderer] static model list pool full (%zu bytes a frame): a view's lists are stock size\n", smodel_pool_size);
+					console::warn("[renderer] static model list pool full\n");
 				}
+
 				r_init_smodel_lists_hook.invoke<void>(lists, delayed_stack);
 				return;
 			}
 
 			thread_local std::vector<std::uint8_t> delayed;
-			delayed.resize(delayed_slots * 16);
+			delayed.resize(delayed_slots * smodel_delayed_slot_size);
 
 			auto* memory = smodel_pool[index] + at;
 			*reinterpret_cast<std::uint32_t*>(lists) = 0;
 			*reinterpret_cast<std::uint8_t**>(lists + 0x08) = memory;
 			*reinterpret_cast<std::uint32_t*>(lists + 0x10) = 0;
-			*reinterpret_cast<std::uint32_t*>(lists + 0x14) = static_cast<std::uint32_t>(smodel_record_bytes);
-			memory += smodel_record_bytes;
+			*reinterpret_cast<std::uint32_t*>(lists + 0x14) = smodel_view_record_bytes;
+			memory += smodel_view_record_bytes;
 
 			auto* slots = delayed.data();
 			auto* list = lists + 0x28;
@@ -89,14 +87,14 @@ namespace renderer
 					memory += bytes;
 					*reinterpret_cast<std::uint8_t**>(list + 0x18) = memory;
 					*reinterpret_cast<std::uint8_t**>(list + 0x28) = slots;
-					slots += static_cast<std::size_t>(count) * 16;
+					slots += static_cast<std::size_t>(count) * smodel_delayed_slot_size;
 					*reinterpret_cast<std::int64_t*>(list - 0x10) = -1;
 					*reinterpret_cast<std::uint64_t*>(list - 0x08) = 0;
 					*reinterpret_cast<std::uint32_t*>(list) = 0;
 					*reinterpret_cast<std::int64_t*>(list + 0x20) = -1;
 					*reinterpret_cast<std::uint32_t*>(list + 0x30) = 0;
 					*reinterpret_cast<std::uint32_t*>(list + 0x34) = count;
-					list += 0x48;
+					list += smodel_list_stride;
 				}
 			}
 		}
@@ -132,10 +130,11 @@ namespace renderer
 				if (now - last_umbra[id - 115] > 1000)
 				{
 					last_umbra[id - 115] = now;
-					const char* what[] = { "camera outside the Umbra view volume", "Umbra query out of memory", "internal Umbra failure" };
-					console::warn("[renderer] %s: drawing everything, no lights or reflection probes\n", what[id - 115]);
+					const char* what[] = { "camera outside umbra view volume", "umbra query out of memory", "umbra query failed" };
+					console::warn("[renderer] %s\n", what[id - 115]);
 				}
 			}
+
 			if (id >= 23 && id <= 25)
 			{
 				static std::uint32_t last[3]{};
@@ -144,10 +143,11 @@ namespace renderer
 				{
 					last[id - 23] = now;
 					const char* what[] = { "too many visible static models (record bytes %llu, limit 262144)",
-						"static model surface list full - not drawing static model", "static model delayed materials full" };
+						"static model surface list full", "static model delayed list full" };
 					console::warn("[renderer] %s\n", utils::string::va(what[id - 23], a));
 				}
 			}
+
 			r_warning_hook.invoke<void>(id, a, b, c);
 		}
 
